@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Computer Science - Alaska Districts Map</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f0f4f8;
+            margin: 0;
+            overflow: hidden; /* Prevent scrollbars due to large map */
+        }
+        .container {
+            width: 95%;
+            max-width: 1200px;
+            height: 90vh; /* Adjust height for better viewing */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #ffffff;
+            border-radius: 1rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 1.5rem;
+        }
+        svg {
+            border: 1px solid #e2e8f0;
+            border-radius: 0.75rem;
+            background-color: #a8dadc; /* Light blue background for Alaska */
+            overflow: hidden; /* Ensure map doesn't overflow SVG */
+        }
+        path {
+            stroke: #1d3557; /* Darker blue border for districts */
+            stroke-width: 0.5;
+            transition: fill 0.2s ease;
+        }
+        path:hover {
+            fill: #457b9d; /* Solid blue color on hover */
+            cursor: pointer;
+        }
+        .tooltip {
+            position: absolute;
+            text-align: center;
+            padding: 0.5rem 1rem;
+            background: #1d3557; /* Dark blue tooltip background */
+            color: #f1faee; /* Light text for tooltip */
+            border: 0px;
+            border-radius: 0.5rem;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-size: 0.875rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-2xl font-bold text-gray-800 mb-6">Alaska School Districts Map</h1>
+        <div id="map-container" class="w-full flex-grow flex justify-center items-center">
+            <!-- D3.js will append the SVG here -->
+        </div>
+    </div>
+
+    <script>
+        // Set up dimensions for the map container
+        const width = window.innerWidth * 0.8; // 80% of window width
+        const height = window.innerHeight * 0.7; // 70% of window height
+
+        // Create SVG element and append it to the map-container div
+        const svg = d3.select("#map-container")
+            .append("svg")
+            .attr("width", "100%") // Make SVG fill its container
+            .attr("height", "100%")
+            .attr("viewBox", `0 0 ${width} ${height}`) // Maintain aspect ratio
+            .attr("preserveAspectRatio", "xMidYMid meet");
+
+        // Create a group element for the map paths
+        const g = svg.append("g");
+
+        // Create a tooltip div, initially hidden
+        const tooltip = d3.select("body").append("div")
+            .attr("class", "tooltip");
+
+        // Define a color scale for different shades of blue for districts
+        // This creates a continuous scale from light blue to dark blue.
+        const colorScale = d3.scaleLinear()
+            .domain([0, 1]) // Arbitrary domain, will be re-mapped to data properties later if needed for actual data values
+            .range(["#a7c7e7", "#1f4a7c"]); // Light blue to dark blue shades
+
+        // Define a geographic projection for Alaska.
+        // d3.geoAlbersUsa is good for US maps, as it handles Alaska and Hawaii separately.
+        // We'll adjust its scale and translation to properly center and size Alaska.
+        const projection = d3.geoAlbersUsa()
+            .scale(width * 1.5) // Adjust scale for Alaska prominence; fine-tune as needed
+            .translate([width / 2, height / 2 + 100]); // Center Alaska, push down slightly
+
+        // Create a geographic path generator based on the projection
+        const pathGenerator = d3.geoPath()
+            .projection(projection);
+
+        // Load the GeoJSON data
+        d3.json("combined_districts.json").then(function(geojsonData) {
+            // Check if the GeoJSON data is loaded and valid
+            if (!geojsonData || !geojsonData.features || geojsonData.features.length === 0) {
+                console.error("GeoJSON data not loaded or is empty.");
+                document.getElementById("map-container").innerHTML = `<p class="text-red-500">Error loading map data: No features found in 'combined_districts.json'. Please ensure the file is valid GeoJSON.</p>`;
+                return;
+            }
+
+            // Adjust projection to fit the content dynamically
+            // This is a more robust way to ensure the map fits the SVG container
+            const bounds = pathGenerator.bounds(geojsonData);
+            const dx = bounds[1][0] - bounds[0][0];
+            const dy = bounds[1][1] - bounds[0][1];
+            const x = (bounds[0][0] + bounds[1][0]) / 2;
+            const y = (bounds[0][1] + bounds[1][1]) / 2;
+            const scale = Math.max(1, Math.min(8, 0.9 / Math.max(dx / width, dy / height))) * 0.9; // Added * 0.9 to give some padding
+            const translate = [width / 2 - scale * x, height / 2 - scale * y];
+
+            projection.scale(scale).translate(translate);
+
+            // Re-create the path generator with the updated projection
+            pathGenerator.projection(projection);
+
+            // Bind GeoJSON features to SVG path elements
+            g.selectAll("path")
+                .data(geojsonData.features)
+                .enter().append("path")
+                .attr("d", pathGenerator) // Use the path generator to draw the district geometries
+                .attr("class", "district")
+                .attr("fill", (d, i) => {
+                    // Assign a different shade of blue to each district based on its index
+                    // This creates a gradient effect across districts if their order changes,
+                    // or just distinct shades if the order is static.
+                    return colorScale(i / geojsonData.features.length);
+                })
+                .on("mouseover", function(event, d) {
+                    // On mouseover, change the fill color to a solid blue and show tooltip
+                    d3.select(this).transition().duration(100).attr("fill", "#457b9d"); // A solid blue for hover
+
+                    tooltip.transition().duration(100).style("opacity", 0.9);
+                    
+                    // The GeoJSON file has a "properties" object with "EntityName" for the district name.
+                    const districtName = d.properties.EntityName || "Unknown District";
+                    
+                    tooltip.html(`District: <strong>${districtName}</strong>`)
+                        .style("left", (event.pageX + 15) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function(event, d, i) {
+                    // On mouseout, revert to the original shade of blue and hide tooltip
+                    d3.select(this).transition().duration(100).attr("fill", colorScale(i / geojsonData.features.length));
+                    tooltip.transition().duration(100).style("opacity", 0);
+                })
+                .on("click", function(event, d) {
+                    // Log district name on click (can be expanded for more functionality later)
+                    const districtName = d.properties.EntityName || "Unknown District";
+                    console.log(`Clicked District: ${districtName}`);
+                    // Future: Integrate with school data here.
+                });
+
+        }).catch(function(error) {
+            // Handle any errors during GeoJSON loading
+            console.error("Error loading the GeoJSON file:", error);
+            document.getElementById("map-container").innerHTML = `<p class="text-red-500">Error loading map data: ${error.message}. Please ensure 'combined_districts.json' is correctly uploaded and accessible.</p>`;
+        });
+
+        // Handle window resizing to make the map responsive
+        window.addEventListener('resize', () => {
+            // Recalculate dimensions based on new window size
+            const newWidth = window.innerWidth * 0.8;
+            const newHeight = window.innerHeight * 0.7;
+
+            // Update viewBox of the SVG for responsive scaling
+            svg.attr("viewBox", `0 0 ${newWidth} ${newHeight}`);
+
+            // For a truly responsive map that re-centers/rescales Alaska perfectly on resize,
+            // the d3.json block would ideally be re-run, or the geojsonData
+            // stored in a global variable and then re-projected and redrawn.
+            // For this prototype, viewBox handles basic scaling.
+            // For a more advanced solution, consider wrapping the D3 logic in a function
+            // that can be called on resize with the new dimensions.
+        });
+    </script>
+</body>
+</html>
